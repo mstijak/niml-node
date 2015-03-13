@@ -1,2 +1,3 @@
 # niml-node
-node.js based NIML parser.
+
+NIML parser for node.js.
