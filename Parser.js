@@ -25,18 +25,25 @@ function Parser(input) {
     var states = [],
         buffer = [];
 
+    function pushState(s, options) {
+        states.push({
+            state: s,
+            options: options || {}
+        });
+    }
+
     var pos = 0,
         prevChar;
 
-    states.push(State.Limbo);
+    pushState(State.Limbo);
 
     function clearBuffer(){
         buffer.splice(0, buffer.length);
     }
 
-    function report(token){
+    function report(token, raw){
         var val = buffer.splice(0, buffer.length).join('');
-        return { token: token, value: val };
+        return { token: token, value: val, raw: raw };
     }
 
     function getNextChar () {
@@ -74,7 +81,7 @@ function Parser(input) {
 
             var state = states[states.length-1];
 
-            switch (state) {
+            switch (state.state) {
                 case State.Limbo:
                     switch (c) {
                         case '+':
@@ -84,14 +91,14 @@ function Parser(input) {
                             return report(Token.IndentDecrease);
 
                         case '<':
-                            states.push(State.LimboMultilineText);
+                            pushState(State.LimboMultilineText);
                             continue;
 
                         default:
                             if (isLetter(c)) {
                                 buffer.splice(0, buffer.length);
                                 buffer.push(c);
-                                states.push(State.TagName);
+                                pushState(State.TagName);
                             }
                             continue;
                     }
@@ -101,7 +108,7 @@ function Parser(input) {
                     {
                         case ' ':
                             states.pop();
-                            states.push(State.TagBody);
+                            pushState(State.TagBody);
                             return report(Token.Element);
 
                         case '\n':
@@ -110,7 +117,7 @@ function Parser(input) {
 
                         case '+':
                             states.pop();
-                            states.push(State.TagBody);
+                            pushState(State.TagBody);
                             c = prevChar;
                             pos--;
                             return report(Token.Element);
@@ -141,12 +148,12 @@ function Parser(input) {
 
                         case '<':
                             states.pop();
-                            states.push(State.MultilineText);
+                            pushState(State.MultilineText);
                             clearBuffer();
                             continue;
 
                         case '{':
-                            states.push(State.Attributes);
+                            pushState(State.Attributes);
                             continue;
 
                         case '|':
@@ -155,14 +162,14 @@ function Parser(input) {
 
                         case '"':
                             states.pop();
-                            states.push(State.InlineText);
-                            states.push(State.QuotedText);
+                            pushState(State.InlineText);
+                            pushState(State.QuotedText);
                             clearBuffer();
                             continue;
                     }
 
                     states.pop();
-                    states.push(State.InlineText);
+                    pushState(State.InlineText);
                     clearBuffer();
                     buffer.push(c);
                     continue;
@@ -199,25 +206,36 @@ function Parser(input) {
                     {
                         buffer.pop();
 
-                        var res = report(state == State.LimboMultilineText ? Token.Text : Token.MultilineText);
+                        var res = report(state.state == State.LimboMultilineText ? Token.Text : Token.MultilineText);
 
                         buffer.push(c);
-                        states.push(State.TagName);
+                        pushState(State.TagName);
                         return res;
                     }
 
                     switch (c)
                     {
-                        case '\n':
-                            if (buffer.length==0)
+                        case ':':
+                            if (buffer.length==0 && !state.options.newline)
+                            {
+                                state.options.raw = true;
                                 continue;
+                            }
+                            break;
+
+
+                        case '\n':
+                            if (buffer.length==0 && !state.options.newline) {
+                                state.options.newline = true;
+                                continue;
+                            }
 
                             break;
 
                         case '"':
-                            if (buffer.length==0 && prevChar == '<')
+                            if (buffer.length==0 && !state.options.newline)
                             {
-                                states.push(State.QuotedText);
+                                pushState(State.QuotedText);
                                 continue;
                             }
                             break;
@@ -227,7 +245,7 @@ function Parser(input) {
                                 buffer.pop();
                                 states.pop();
                                 if (buffer.length > 0)
-                                    return report(state == State.LimboMultilineText ? Token.Text : Token.MultilineText);
+                                    return report(state.state == State.LimboMultilineText ? Token.Text : Token.MultilineText, state.options.raw);
                                 continue;
                             }
                             buffer.push(c);
@@ -253,7 +271,7 @@ function Parser(input) {
                         default:
                             clearBuffer();
                             buffer.push(c);
-                            states.push(State.AttributeName);
+                            pushState(State.AttributeName);
                             continue;
                     }
 
@@ -262,7 +280,7 @@ function Parser(input) {
                     {
                         case ':':
                             states.pop();
-                            states.push(State.AttributeValue);
+                            pushState(State.AttributeValue);
                             return report(Token.AttributeName);
 
                         case ',':
@@ -309,7 +327,7 @@ function Parser(input) {
                         default:
                             if (buffer.length == 0 && c == '\"')
                             {
-                                states.push(State.QuotedText);
+                                pushState(State.QuotedText);
                                 continue;
                             }
                             buffer.push(c);
@@ -384,7 +402,7 @@ function Parser(input) {
 
                 case Token.InlineText:
                 case Token.MultilineText:
-                    addChild(lastElement, { text: tr.value });
+                    addChild(lastElement, { text: tr.value, raw: tr.raw });
                     break;
 
                 case Token.Text:

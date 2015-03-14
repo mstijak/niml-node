@@ -24,7 +24,10 @@ function toHtml(niml) {
                 process(el.children);
                 s += '</' + el.name + '>';
             } else if (el.text) {
-                s += escape(el.text);
+                if (el.raw)
+                    s+=el.text;
+                else
+                    s += escape(el.text);
             }
         }
     }
