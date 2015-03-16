@@ -1,0 +1,24 @@
+[
+  {
+    "name": "p",
+    "children": [
+      {
+        "text": "This is a text containing a "
+      },
+      {
+        "name": "a",
+        "attributes": {
+          "href": "#"
+        },
+        "children": [
+          {
+            "text": "link"
+          }
+        ]
+      },
+      {
+        "text": "."
+      }
+    ]
+  }
+]

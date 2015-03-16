@@ -26,24 +26,23 @@ function Parser(input) {
         buffer = [];
 
     function pushState(s, options) {
-        states.push({
+        var state = {
             state: s,
             options: options || {}
-        });
+        };
+        states.push(state);
+        return state;
     }
 
     var pos = 0,
-        prevChar;
+        prevChar,
+        c = '\0',
+        state;
 
     pushState(State.Limbo);
 
     function clearBuffer(){
         buffer.splice(0, buffer.length);
-    }
-
-    function report(token, raw){
-        var val = buffer.splice(0, buffer.length).join('');
-        return { token: token, value: val, raw: raw };
     }
 
     function getNextChar () {
@@ -60,11 +59,27 @@ function Parser(input) {
 
     this.read = function () {
 
-        var c = '\0';
-
         function repeatLast(prevChar) {
             pos--;
             c = prevChar;
+        }
+
+        function report(token) {
+            var l = buffer.length;
+            if (!state.options.preserveWhitespace && l && buffer[l - 1]==' ')
+                l--;
+
+            var val = buffer.splice(0, buffer.length).splice(0, l).join(''),
+                res = {
+                    token: token,
+                    value: val
+                };
+
+            res.raw = state.options.raw;
+            res.nest = state.options.nest;
+
+
+            return res;
         }
 
         while (true) {
@@ -79,16 +94,16 @@ function Parser(input) {
                 continue;
             }
 
-            var state = states[states.length-1];
+            state = states[states.length-1];
 
             switch (state.state) {
                 case State.Limbo:
                     switch (c) {
                         case '+':
-                            return report(Token.AddToLastElement);
+                            return report(Token.EnterLast);
 
                         case '-':
-                            return report(Token.IndentDecrease);
+                            return report(Token.ExitElement);
 
                         case '<':
                             pushState(State.LimboMultilineText);
@@ -132,7 +147,7 @@ function Parser(input) {
                     if (prevChar=='/' && c == '>')
                     {
                         states.pop();
-                        continue;
+                        return report(Token.CloseLast);
                     }
 
                     switch (c) {
@@ -179,10 +194,10 @@ function Parser(input) {
                     if (prevChar == '/' && c == '>')
                     {
                         states.pop();
+                        pushState(State.TagBody);
                         buffer.pop();
-                        if (buffer.length > 0)
-                            return report(Token.InlineText);
-                        continue;
+                        repeatLast(prevChar);
+                        return report(Token.InlineText);
                     }
 
                     switch (c)
@@ -205,11 +220,12 @@ function Parser(input) {
                     if (prevChar == '<' && isLetter(c))
                     {
                         buffer.pop();
-
+                        state.options.preserveWhitespace = true;
                         var res = report(state.state == State.LimboMultilineText ? Token.Text : Token.MultilineText);
 
                         buffer.push(c);
-                        pushState(State.TagName);
+                        pushState(State.TagName, { nest: true });
+                        state.options.nest = true;
                         return res;
                     }
 
@@ -245,7 +261,7 @@ function Parser(input) {
                                 buffer.pop();
                                 states.pop();
                                 if (buffer.length > 0)
-                                    return report(state.state == State.LimboMultilineText ? Token.Text : Token.MultilineText, state.options.raw);
+                                    return report(state.state == State.LimboMultilineText ? Token.Text : Token.MultilineText);
                                 continue;
                             }
                             buffer.push(c);
@@ -365,13 +381,14 @@ function Parser(input) {
     this.parse = function()
     {
         var dummyParent = {},
-            currentElement = dummyParent,
-            lastElement = dummyParent;
+            lastEl = dummyParent,
+            lastElParent = dummyParent,
+            parentEl,
+            addToLast = false;
 
         var parents = [];
         parents.push(dummyParent);
 
-        var addToCurrent = false;
         var lastAttributeName = null;
         var tr;
 
@@ -383,51 +400,45 @@ function Parser(input) {
 
         while (tr = this.read())
         {
+            parentEl = lastEl && (tr.nest || addToLast) ? lastEl : parents[parents.length-1];
+
+            addToLast = false;
+
             switch (tr.token)
             {
                 case Token.Element:
-                    lastElement = { name : tr.value };
-                    if (addToCurrent)
-                    {
-                        addChild(currentElement, lastElement);
-                        addToCurrent = false;
-                    }
-                    else
-                    {
-                        currentElement = lastElement;
-                        addChild(parents[parents.length-1], currentElement);
-                    }
+                    lastElParent = parentEl;
+                    lastEl = { name : tr.value };
+                    addChild(parentEl, lastEl);
                     break;
 
 
                 case Token.InlineText:
                 case Token.MultilineText:
-                    addChild(lastElement, { text: tr.value, raw: tr.raw });
+                    addChild(lastEl, { text: tr.value, raw: tr.raw });
                     break;
 
                 case Token.Text:
-                    if (addToCurrent)
-                    {
-                        addChild(currentElement, { text: tr.value });
-                        addToCurrent = false;
-                    }
-                    else
-                    {
-                        addChild(parents[parents.length-1], { text: tr.value });
-                    }
+                    addChild(parentEl, { text: tr.value });
                     break;
 
-                case Token.IndentDecrease:
-                    if (parents.length > 1)
-                        currentElement = parents.pop();
+                case Token.ExitElement:
+                    if (parents.length > 1) {
+                        parents.pop();
+                        lastEl = null;
+                    }
                     break;
 
                 case Token.EnterElement:
-                    parents.push(lastElement);
+                    parents.push(lastEl);
                     break;
 
-                case Token.AddToLastElement:
-                    addToCurrent = true;
+                case Token.EnterLast:
+                    addToLast = true;
+                    break;
+
+                case Token.CloseLast:
+                    lastEl = lastElParent;
                     break;
 
                 case Token.AttributeName:
@@ -435,14 +446,14 @@ function Parser(input) {
                     if (lastAttributeName == '')
                         break;
 
-                    if (lastElement.attributes == null)
-                        lastElement.attributes = {};
+                    if (lastEl.attributes == null)
+                        lastEl.attributes = {};
 
-                    lastElement.attributes[lastAttributeName] = null;
+                    lastEl.attributes[lastAttributeName] = null;
                     break;
 
                 case Token.AttributeValue:
-                    lastElement.attributes[lastAttributeName] = tr.value;
+                    lastEl.attributes[lastAttributeName] = tr.value;
                     break;
             }
         }

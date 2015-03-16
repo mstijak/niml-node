@@ -5,8 +5,10 @@ const Token = {
     EndElement : 3,
 
     EnterElement : 4,
-    AddToLastElement : 5,
-    IndentDecrease : 6,
+    ExitElement : 6,
+
+    EnterLast: 5,
+    CloseLast: 51,
 
     InlineText : 7,
     MultilineText: 8,
